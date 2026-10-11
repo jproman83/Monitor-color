@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Monitor de bandas de color</title>
+<style>
+:root{--bg:#f3f5f4;--fg:#14211d;--mu:#5d6b66;--pn:#fff;--ln:#d5dcd9;--ac:#0f766e;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#101716;--fg:#e4ede9;--mu:#8fa19a;--pn:#18221f;--ln:#2b3a35;--ac:#2dd4bf}}
+:root[data-theme="dark"]{--bg:#101716;--fg:#e4ede9;--mu:#8fa19a;--pn:#18221f;--ln:#2b3a35;--ac:#2dd4bf}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 "Segoe UI",system-ui,sans-serif;padding:16px;max-width:980px;margin-inline:auto}
+h1{font-size:1.35rem;margin:0 0 2px}p.s{color:var(--mu);margin:0 0 14px}
+.g{display:grid;gap:14px;grid-template-columns:1fr}
+@media(min-width:760px){.g{grid-template-columns:340px 1fr}}
+.p{background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:12px}
+h2{font-size:.95rem;margin:0 0 8px}
+canvas#v{width:100%;aspect-ratio:4/3;background:#000;border-radius:6px;image-rendering:pixelated;display:block}
+label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:6px 0;color:var(--mu);font-size:.85rem}
+select,input[type=number],button{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--ln);border-radius:6px;padding:6px 8px}
+input[type=number]{width:64px}
+button{cursor:pointer}button.pr{background:var(--ac);color:#fff;border-color:var(--ac);font-weight:600}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.r{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.b{display:grid;grid-template-columns:14px 78px 1fr 46px 46px;gap:6px;align-items:center;margin:5px 0;font-size:.85rem}
+.b i{width:14px;height:14px;border-radius:3px}
+.bar{height:8px;background:var(--ln);border-radius:4px;overflow:hidden}.bar u{display:block;height:100%}
+.n{text-align:right;font-variant-numeric:tabular-nums}
+.sc{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.82rem;font-variant-numeric:tabular-nums}
+th,td{padding:5px 6px;border-bottom:1px solid var(--ln);text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left}
+canvas#t{width:100%;height:150px;display:block}
+#st{color:var(--mu);font-size:.85rem;margin-top:6px;min-height:1.2em}
+</style>
+</head>
+<body>
+<h1>Monitor de bandas de color</h1>
+<p class="s">Clasifica cada píxel por su matiz (°) en bandas, y cuenta cuántas veces aparece cada banda en cada ventana de tiempo.</p>
+<div class="g">
+<div>
+<div class="p"><canvas id="v" width="160" height="120"></canvas>
+<label>Fuente<select id="src"><option value="demo">Demo simulada</option><option value="cam">Cámara</option><option value="scr">Pantalla o ventana</option></select></label>
+
+<label>Ventana (s)<input type="number" id="win" value="30" min="5"></label>
+<label>Muestreo (ms)<input type="number" id="smp" value="200" min="50" step="50"></label>
+<label>Saturación mín. (%)<input type="number" id="smin" value="35" min="0" max="100"></label>
+<label>Brillo mín. (%)<input type="number" id="vmin" value="25" min="0" max="100"></label>
+<label>Área mín. para “visto” (%)<input type="number" id="amin" value="1" min="0.1" step="0.1"></label>
+<div class="r"><button class="pr" id="go">Iniciar monitoreo</button><button id="csv">Exportar CSV</button><button id="clr">Limpiar</button></div>
+<div id="st">Listo.</div></div>
+</div>
+<div style="display:grid;gap:14px">
+<div class="p"><h2>Bandas (matiz inicial y final en °) · ventana actual</h2><div id="bands"></div>
+<div class="n" style="margin-top:4px;color:var(--mu);font-size:.8rem">Columnas: % de área · veces vista · cuadros</div></div>
+<div class="p"><h2>Línea de tiempo (últimos 3 min aprox.)</h2><canvas id="t" width="640" height="150"></canvas></div>
+<div class="p"><h2>Registro de detecciones: hora exacta (<span id="nev">0</span> en total)</h2><div class="sc" style="max-height:260px;overflow-y:auto"><table id="ev"></table></div></div>
+<div class="p"><h2>Ventanas completadas: veces vista por banda</h2><div class="sc"><table id="tb"></table></div></div>
+</div>
+</div>
+<script>
+const B=[["Rojo",345,15,"#e5484d"],["Naranja",15,45,"#f76b15"],["Amarillo",45,70,"#e5c100"],["Verde",70,165,"#30a46c"],["Cian",165,200,"#12a594"],["Azul",200,260,"#3e63dd"],["Violeta",260,300,"#8e4ec6"],["Magenta",300,345,"#d6409f"]]
+.map(([n,a,b,c])=>({n,a,b,c,frac:0,on:false,miss:0,ev:0,fr:0,hist:[]}));
+const $=id=>document.getElementById(id),cv=$("v"),cx=cv.getContext("2d",{willReadFrequently:true});
+const vid=document.createElement("video");vid.muted=true;vid.playsInline=true;vid.loop=true;
+let run=false,timer=null,t0=0,log=[],evl=[],stream=null,demo=[],dT=0;
+// UI de bandas
+$("bands").innerHTML=B.map((b,i)=>`<div class="b"><i style="background:${b.c}"></i><span>${b.n}</span><div class="bar"><u id="u${i}" style="background:${b.c};width:0"></u></div><span class="n"><input type="number" id="a${i}" value="${b.a}" min="0" max="360" style="width:52px"></span><span class="n"><input type="number" id="z${i}" value="${b.b}" min="0" max="360" style="width:52px"></span></div>
+<div class="b" style="margin-top:-2px;grid-template-columns:14px 78px 1fr 46px 46px;color:var(--mu)"><span></span><span></span><span id="m${i}">0% · 0 veces · 0</span><span></span><span></span></div>`).join("");
+B.forEach((b,i)=>{$("a"+i).onchange=e=>b.a=+e.target.value;$("z"+i).onchange=e=>b.b=+e.target.value});
+function hue(r,g,b){const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;let h=0;
+ if(d){h=mx===r?((g-b)/d)%6:mx===g?(b-r)/d+2:(r-g)/d+4;h*=60;if(h<0)h+=360}
+ return[h,mx?d/mx:0,mx/255]}
+const inB=(h,b)=>b.a<=b.b?h>=b.a&&h<b.b:h>=b.a||h<b.b;
+function drawDemo(){cx.fillStyle="#222";cx.fillRect(0,0,160,120);
+ if(performance.now()-dT>1800){dT=performance.now();demo=demo.filter(()=>Math.random()<.5);
+  if(Math.random()<.8){const h=Math.random()*360;demo.push({x:Math.random()*120,y:Math.random()*90,w:15+Math.random()*30,h:15+Math.random()*25,c:`hsl(${h} 80% 50%)`})}}
+ demo.forEach(o=>{cx.fillStyle=o.c;cx.fillRect(o.x,o.y,o.w,o.h)})}
+function tick(){
+ if($("src").value==="demo")drawDemo();else if(vid.readyState>=2)cx.drawImage(vid,0,0,160,120);
+ const d=cx.getImageData(0,0,160,120).data,sm=$("smin").value/100,vm=$("vmin").value/100,am=$("amin").value/100,N=160*120;
+ const c=new Array(B.length).fill(0);
+ for(let i=0;i<d.length;i+=4){const[h,s,v]=hue(d[i],d[i+1],d[i+2]);if(s<sm||v<vm)continue;
+  for(let k=0;k<B.length;k++)if(inB(h,B[k])){c[k]++;break}}
+ B.forEach((b,k)=>{b.frac=c[k]/N;const on=b.frac>=am;
+  if(on){if(!b.on){b.ev++;evl.push({t:new Date(),n:b.n,c:b.c,p:b.frac,w:log.length+1});addEv()}b.on=true;b.miss=0;b.fr++}else if(b.on&&++b.miss>=2)b.on=false;
+  b.hist.push(b.on?1:0);if(b.hist.length>900)b.hist.shift();
+  $("u"+k).style.width=Math.min(100,b.frac*100*4)+"%";
+  $("m"+k).textContent=`${(b.frac*100).toFixed(1)}% · ${b.ev} veces · ${b.fr}`});
+ const el=(Date.now()-t0)/1000,w=+$("win").value;
+ $("st").textContent=`Monitoreando · ventana ${log.length+1}: ${Math.floor(el)} / ${w} s`;
+ if(el>=w)closeWin();plot()}
+function closeWin(){const e=Date.now();log.push({a:new Date(t0),z:new Date(e),r:B.map(b=>({n:b.n,ev:b.ev,fr:b.fr}))});
+ B.forEach(b=>{b.ev=0;b.fr=0;b.on=false;b.miss=0});t0=e;table()}
+const f=d=>d.toLocaleTimeString("es-CL",{hour12:false});
+const f2=d=>f(d)+"."+String(d.getMilliseconds()).padStart(3,"0");
+function addEv(){$("ev").innerHTML=evl.length?`<tr><th>Hora exacta</th><th>Banda</th><th>Área</th><th>Ventana</th></tr>`+evl.slice(-200).reverse().map(e=>`<tr><td>${f2(e.t)}</td><td style="color:${e.c}">${e.n}</td><td>${(e.p*100).toFixed(1)}%</td><td>${e.w}</td></tr>`).join(""):"<tr><td>Sin detecciones todavía.</td></tr>";$("nev").textContent=evl.length}
+function table(){$("tb").innerHTML=log.length?`<tr><th>Ventana</th>${B.map(b=>`<th style="color:${b.c}">${b.n}</th>`).join("")}</tr>`+
+ log.slice().reverse().map(l=>`<tr><td>${f(l.a)}–${f(l.z)}</td>${l.r.map(x=>`<td>${x.ev}</td>`).join("")}</tr>`).join(""):"<tr><td>Sin ventanas completadas todavía.</td></tr>"}
+function plot(){const c=$("t"),g=c.getContext("2d"),W=c.width,H=c.height,rh=H/B.length;g.clearRect(0,0,W,H);
+ B.forEach((b,k)=>{g.fillStyle=b.c;const n=b.hist.length,px=W/900;for(let i=0;i<n;i++)if(b.hist[i])g.fillRect(W-(n-i)*px,k*rh+2,Math.max(px,1),rh-4)})}
+async function start(){
+ const s=$("src").value;
+ try{if(s==="cam"){stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});vid.srcObject=stream;await vid.play()}
+ else if(s==="scr"){stream=await navigator.mediaDevices.getDisplayMedia({video:true});vid.srcObject=stream;await vid.play()}}
+ catch(e){$("st").textContent="No se pudo acceder a la fuente ("+e.name+"). Prueba el modo demo o la captura de pantalla.";return}
+ run=true;t0=Date.now();$("go").textContent="Detener";timer=setInterval(tick,+$("smp").value)}
+function stop(){run=false;clearInterval(timer);if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}vid.pause();$("go").textContent="Iniciar monitoreo";$("st").textContent="Detenido."}
+$("go").onclick=()=>run?stop():start();
+
+$("src").onchange=()=>{if(run)stop()};
+$("clr").onclick=()=>{log=[];evl=[];addEv();B.forEach(b=>{b.ev=0;b.fr=0;b.hist=[]});t0=Date.now();table();plot()};
+$("csv").onclick=()=>{const rows=["hora_exacta,banda,area_pct,ventana"];evl.forEach(e=>rows.push([e.t.toISOString(),e.n,(e.p*100).toFixed(2),e.w].join(",")));rows.push("","inicio,fin,banda,matiz_ini,matiz_fin,veces_vista,cuadros");
+ log.forEach(l=>l.r.forEach((x,k)=>rows.push([l.a.toISOString(),l.z.toISOString(),x.n,B[k].a,B[k].b,x.ev,x.fr].join(","))));
+ const w=window.open("","_blank");if(w){w.document.write("<pre>"+rows.join("\n")+"</pre>")}};
+table();addEv();plot();drawDemo();
+</script>
+</body>
+</html>
